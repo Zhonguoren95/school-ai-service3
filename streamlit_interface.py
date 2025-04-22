@@ -1,6 +1,6 @@
-
 import streamlit as st
 import pandas as pd
+import openai
 from core import process_documents
 
 st.set_page_config(page_title="AI-сервис подбора оборудования", layout="wide")
@@ -12,6 +12,33 @@ uploaded_spec = st.file_uploader("📄 Техническое задание (PD
 uploaded_prices = st.file_uploader("📊 Прайсы поставщиков (XLSX)", type=["xlsx"], accept_multiple_files=True)
 uploaded_discounts = st.file_uploader("💸 Скидки от поставщиков (XLSX, по желанию)", type=["xlsx"])
 
+# GPT API Key (ВСТАВЬ СВОЙ КЛЮЧ НИЖЕ)
+openai.api_key = st.secrets.get("OPENAI_API_KEY") or "sk-..."
+
+def ask_gpt(prompt):
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "Ты помощник по интерпретации технических заданий на закупку оборудования для школ и садов."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Ошибка обращения к GPT: {e}"
+
+st.markdown("---")
+st.subheader("🤖 Помощь от GPT")
+gpt_input = st.text_area("Задай вопрос по ТЗ или товару (например: 'что такое рельефная модель моллюска?')")
+if st.button("🧠 Получить ответ от ИИ") and gpt_input:
+    with st.spinner("Запрос к GPT..."):
+        gpt_result = ask_gpt(gpt_input)
+        st.success("GPT ответил:")
+        st.markdown(f"> {gpt_result}")
+
+st.markdown("---")
+st.subheader("📥 Загрузка и подбор")
 if st.button("🚀 Запустить подбор"):
     if uploaded_spec and uploaded_prices:
         with st.spinner("⏳ Обработка данных..."):
