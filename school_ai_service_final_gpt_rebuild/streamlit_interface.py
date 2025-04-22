@@ -1,0 +1,50 @@
+
+import streamlit as st
+import pandas as pd
+import openai
+from core import process_documents
+
+st.set_page_config(page_title="AI-сервис подбора оборудования", layout="wide")
+st.title("🛠️ AI-сервис подбора оборудования")
+st.markdown("Загрузите техническое задание, прайсы и (опционально) файл со скидками — система всё сделает сама.")
+
+uploaded_spec = st.file_uploader("📄 Техническое задание (PDF)", type=["pdf"])
+uploaded_prices = st.file_uploader("📊 Прайсы поставщиков (XLSX)", type=["xlsx"], accept_multiple_files=True)
+uploaded_discounts = st.file_uploader("💸 Скидки от поставщиков (XLSX, по желанию)", type=["xlsx"])
+
+openai.api_key = os.environ.get("OPENAI_API_KEY")
+
+def ask_gpt(prompt):
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "Ты помощник по интерпретации технических заданий на закупку оборудования для школ и садов."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Ошибка GPT: {e}"
+
+st.markdown("---")
+st.subheader("🤖 Помощь от GPT")
+gpt_input = st.text_area("Задай вопрос по ТЗ или товару")
+if st.button("🧠 Получить ответ от ИИ") and gpt_input:
+    with st.spinner("Запрос к GPT..."):
+        st.success(ask_gpt(gpt_input))
+
+st.markdown("---")
+st.subheader("📥 Загрузка и подбор")
+if st.button("🚀 Запустить подбор"):
+    if uploaded_spec and uploaded_prices:
+        with st.spinner("⏳ Обработка данных..."):
+            ts_text, result_df, result_file = process_documents(uploaded_spec, uploaded_prices, uploaded_discounts)
+        st.success("✅ Подбор завершён!")
+        st.subheader("📜 Распознанный текст из ТЗ")
+        st.text_area("Текст ТЗ", ts_text[:1000], height=200)
+        st.subheader("📋 Результаты подбора")
+        st.dataframe(result_df)
+        st.download_button("💾 Скачать Excel", result_file, file_name="Результат_подбора.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    else:
+        st.error("⚠️ Загрузите ТЗ и хотя бы один прайс.")

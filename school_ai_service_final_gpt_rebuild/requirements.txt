@@ -1,0 +1,9 @@
+
+streamlit
+pandas
+openpyxl
+PyMuPDF
+pdfplumber
+pdf2image
+pytesseract
+openai
