@@ -12,44 +12,29 @@ uploaded_spec = st.file_uploader("📄 Техническое задание (PD
 uploaded_prices = st.file_uploader("📊 Прайсы поставщиков (XLSX)", type=["xlsx"], accept_multiple_files=True)
 uploaded_discounts = st.file_uploader("💸 Скидки от поставщиков (XLSX, по желанию)", type=["xlsx"])
 
-# GPT API Key (ВСТАВЬ СВОЙ КЛЮЧ НИЖЕ)
-import os
-openai.api_key = os.environ.get("OPENAI_API_KEY")
-
-
-def ask_gpt(prompt):
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "Ты помощник по интерпретации технических заданий на закупку оборудования для школ и садов."},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        return f"Ошибка обращения к GPT: {e}"
-
-st.markdown("---")
-st.subheader("🤖 Помощь от GPT")
-gpt_input = st.text_area("Задай вопрос по ТЗ или товару (например: 'что такое рельефная модель моллюска?')")
-if st.button("🧠 Получить ответ от ИИ") and gpt_input:
-    with st.spinner("Запрос к GPT..."):
-        gpt_result = ask_gpt(gpt_input)
-        st.success("GPT ответил:")
-        st.markdown(f"> {gpt_result}")
+# GPT KEY
+openai.api_key = st.secrets.get("OPENAI_API_KEY")
 
 st.markdown("---")
 st.subheader("📥 Загрузка и подбор")
+
 if st.button("🚀 Запустить подбор"):
     if uploaded_spec and uploaded_prices:
         with st.spinner("⏳ Обработка данных..."):
-            ts_text, result_df, result_file = process_documents(uploaded_spec, uploaded_prices, uploaded_discounts)
-        st.success("✅ Подбор завершён!")
-        st.subheader("📜 Распознанный текст из ТЗ")
-        st.text_area("Текст ТЗ (первые 1000 символов)", ts_text[:1000], height=200)
-        st.subheader("📋 Результаты подбора")
-        st.dataframe(result_df, use_container_width=True)
-        st.download_button("💾 Скачать Excel", data=result_file, file_name="Результат_подбора.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            try:
+                ts_text, result_df, result_file = process_documents(uploaded_spec, uploaded_prices, uploaded_discounts)
+
+                if result_df.empty:
+                    st.warning("⚠️ Обработка завершена, но подходящих товаров не найдено.")
+                else:
+                    st.success("✅ Подбор завершён!")
+                    st.subheader("📜 Распознанный текст из ТЗ")
+                    st.text_area("Текст ТЗ", ts_text[:1000], height=200)
+                    st.subheader("📋 Результаты подбора")
+                    st.dataframe(result_df, use_container_width=True)
+                    st.download_button("💾 Скачать Excel", data=result_file, file_name="Результат_подбора.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+            except Exception as e:
+                st.error(f"❌ Ошибка при обработке: {e}")
     else:
-        st.error("⚠️ Загрузите как минимум ТЗ и один прайс.")
+        st.error("⚠️ Загрузите как минимум ТЗ и хотя бы один прайс.")
