@@ -1,4 +1,3 @@
-
 import pandas as pd
 import pdfplumber
 import re
@@ -7,6 +6,7 @@ from io import BytesIO
 from pdf2image import convert_from_bytes
 import pytesseract
 from gpt_utils import analyze_position_with_gpt
+import streamlit as st
 
 def extract_text_from_pdf(file):
     text = ""
@@ -16,15 +16,12 @@ def extract_text_from_pdf(file):
                 page_text = page.extract_text()
                 if page_text:
                     text += page_text + "\n"
-
         if not text.strip():
             file.seek(0)
             images = convert_from_bytes(file.read(), dpi=300)
             for img in images:
                 text += pytesseract.image_to_string(img, lang="rus") + "\n"
-
         return text
-
     except Exception as e:
         return f"[ERROR] PDF parse failed: {e}"
 
@@ -73,59 +70,80 @@ def load_discounts(file):
         return {}
 
 def process_documents(spec_file, prices_files, discounts_file=None):
+    log = []
     try:
         text = extract_text_from_pdf(spec_file)
         if text.startswith("[ERROR]"):
             return text, pd.DataFrame(), None
 
+        log.append("📄 ТЗ успешно распознано")
         ts_df = parse_requirements(text)
+        log.append(f"🔍 Найдено позиций в ТЗ: {len(ts_df)}")
 
-        # GPT-анализ
         enriched_rows = []
-        for row in ts_df.itertuples():
+        for i, row in enumerate(ts_df.itertuples(), start=1):
             row_dict = row._asdict()
-            analysis = analyze_position_with_gpt(row_dict["Наименование из ТЗ"])
-            row_dict["GPT_тип"] = analysis.get("тип", "")
-            row_dict["GPT_синонимы"] = ", ".join(analysis.get("синонимы", []))
-            row_dict["GPT_ключи"] = ", ".join(analysis.get("ключи", []))
+            try:
+                analysis = analyze_position_with_gpt(row_dict["Наименование из ТЗ"])
+                row_dict["GPT_тип"] = analysis.get("тип", "")
+                row_dict["GPT_синонимы"] = ", ".join(analysis.get("синонимы", []))
+                row_dict["GPT_ключи"] = ", ".join(analysis.get("ключи", []))
+            except Exception as e:
+                row_dict["GPT_тип"] = "Ошибка"
+                row_dict["GPT_синонимы"] = ""
+                row_dict["GPT_ключи"] = row_dict["Наименование из ТЗ"].split()[0]
+                log.append(f"⚠️ GPT ошибка в строке {i}: {e}")
             enriched_rows.append(row_dict)
 
         enriched_df = pd.DataFrame(enriched_rows)
+        log.append("✅ GPT-анализ завершён")
 
         prices_df = load_price_list(prices_files)
+        log.append(f"📦 Прайсы загружены: {len(prices_df)} товаров")
         discounts = load_discounts(discounts_file) if discounts_file else {}
 
         results = []
-        for _, req in enriched_df.iterrows():
-            name = req["Наименование из ТЗ"]
-            qty = req["Кол-во"]
-            search_keys = req.get("GPT_ключи", name).split(", ")
+        for i, req in enriched_df.iterrows():
+            try:
+                name = req["Наименование из ТЗ"]
+                qty = req["Кол-во"]
+                search_keys = req.get("GPT_ключи", name).split(", ")
 
-            matched = pd.DataFrame()
-            for key in search_keys:
-                matches = prices_df[prices_df["Наименование"].str.contains(key, case=False, na=False)]
-                matched = pd.concat([matched, matches])
-            matched = matched.drop_duplicates().sort_values("Цена").head(3)
+                matched = pd.DataFrame()
+                for key in search_keys:
+                    matches = prices_df[prices_df["Наименование"].str.contains(key, case=False, na=False)]
+                    matched = pd.concat([matched, matches])
+                matched = matched.drop_duplicates().sort_values("Цена").head(3)
 
-            item = {
-                "Наименование из ТЗ": name,
-                "Кол-во": qty
-            }
+                item = {
+                    "Наименование из ТЗ": name,
+                    "Кол-во": qty
+                }
 
-            for i, (_, match) in enumerate(matched.iterrows(), start=1):
-                supplier = match.get("Поставщик", f"Поставщик {i}")
-                price = match.get("Цена")
-                discount = discounts.get(supplier, 0)
-                final_price = round(price * (1 - discount / 100), 2) if price else ""
+                for j, (_, match) in enumerate(matched.iterrows(), start=1):
+                    supplier = match.get("Поставщик", f"Поставщик {j}")
+                    price = match.get("Цена")
+                    discount = discounts.get(supplier, 0)
+                    final_price = round(price * (1 - discount / 100), 2) if price else ""
 
-                item[f"Поставщик {i}"] = supplier
-                item[f"Цена {i}"] = price
-                item[f"Скидка {i}"] = f"{discount}%"
-                item[f"Итог {i}"] = final_price
+                    item[f"Поставщик {j}"] = supplier
+                    item[f"Цена {j}"] = price
+                    item[f"Скидка {j}"] = f"{discount}%"
+                    item[f"Итог {j}"] = final_price
 
-            results.append(item)
+                if not matched.empty:
+                    results.append(item)
+                else:
+                    item["Поставщик 1"] = "Не найдено"
+                    item["Цена 1"] = ""
+                    item["Скидка 1"] = ""
+                    item["Итог 1"] = ""
+                    results.append(item)
+            except Exception as e:
+                log.append(f"❌ Ошибка в обработке строки {i + 1}: {e}")
 
         result_df = pd.DataFrame(results)
+        log.append(f"✅ Обработка завершена. Успешно обработано: {len(result_df)} строк")
 
         wb = load_workbook("Форма для результата.xlsx")
         ws = wb.active
@@ -143,7 +161,7 @@ def process_documents(spec_file, prices_files, discounts_file=None):
         wb.save(output)
         output.seek(0)
 
-        return text[:1000], result_df, output.read()
+        return "\n".join(log), result_df, output.read()
 
     except Exception as e:
         return f"[ERROR] Global fail: {e}", pd.DataFrame(), None
