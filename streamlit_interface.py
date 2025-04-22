@@ -13,7 +13,9 @@ uploaded_prices = st.file_uploader("📊 Прайсы поставщиков (XL
 uploaded_discounts = st.file_uploader("💸 Скидки от поставщиков (XLSX, по желанию)", type=["xlsx"])
 
 # GPT API Key (ВСТАВЬ СВОЙ КЛЮЧ НИЖЕ)
-openai.api_key = st.secrets.get("OPENAI_API_KEY") or "sk-..."
+import os
+openai.api_key = os.environ.get("OPENAI_API_KEY")
+
 
 def ask_gpt(prompt):
     try:
