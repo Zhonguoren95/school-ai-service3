@@ -6,6 +6,7 @@ from openpyxl import load_workbook
 from io import BytesIO
 from pdf2image import convert_from_bytes
 import pytesseract
+from gpt_utils import analyze_position_with_gpt
 
 def extract_text_from_pdf(file):
     text = ""
@@ -32,7 +33,7 @@ def parse_requirements(text):
     lines = text.split("\n")
     for line in lines:
         if any(char.isdigit() for char in line):
-            parts = re.split(r"\s{2,}", line.strip())
+            parts = re.split(r"\s{2,}|\t", line.strip())
             if len(parts) >= 2:
                 name = parts[0]
                 quantity = re.search(r"\d+", parts[1])
@@ -78,23 +79,42 @@ def process_documents(spec_file, prices_files, discounts_file=None):
             return text, pd.DataFrame(), None
 
         ts_df = parse_requirements(text)
+
+        # GPT-анализ
+        enriched_rows = []
+        for row in ts_df.itertuples():
+            row_dict = row._asdict()
+            analysis = analyze_position_with_gpt(row_dict["Наименование из ТЗ"])
+            row_dict["GPT_тип"] = analysis.get("тип", "")
+            row_dict["GPT_синонимы"] = ", ".join(analysis.get("синонимы", []))
+            row_dict["GPT_ключи"] = ", ".join(analysis.get("ключи", []))
+            enriched_rows.append(row_dict)
+
+        enriched_df = pd.DataFrame(enriched_rows)
+
         prices_df = load_price_list(prices_files)
         discounts = load_discounts(discounts_file) if discounts_file else {}
 
         results = []
-        for _, req in ts_df.iterrows():
+        for _, req in enriched_df.iterrows():
             name = req["Наименование из ТЗ"]
             qty = req["Кол-во"]
-            matches = prices_df[prices_df["Наименование"].str.contains(name.split()[0], case=False, na=False)]
+            search_keys = req.get("GPT_ключи", name).split(", ")
+
+            matched = pd.DataFrame()
+            for key in search_keys:
+                matches = prices_df[prices_df["Наименование"].str.contains(key, case=False, na=False)]
+                matched = pd.concat([matched, matches])
+            matched = matched.drop_duplicates().sort_values("Цена").head(3)
 
             item = {
                 "Наименование из ТЗ": name,
                 "Кол-во": qty
             }
 
-            for i, (_, match) in enumerate(matches.head(3).iterrows(), start=1):
-                supplier = match["Поставщик"]
-                price = match["Цена"]
+            for i, (_, match) in enumerate(matched.iterrows(), start=1):
+                supplier = match.get("Поставщик", f"Поставщик {i}")
+                price = match.get("Цена")
                 discount = discounts.get(supplier, 0)
                 final_price = round(price * (1 - discount / 100), 2) if price else ""
 
